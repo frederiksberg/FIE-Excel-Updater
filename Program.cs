@@ -1,6 +1,9 @@
 ﻿using Microsoft.Office.Interop.Excel;
+using OutLook = Microsoft.Office.Interop.Outlook;
+using NLog;
 using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -15,6 +18,7 @@ namespace ExcelUpdater
         private static Application _excel;
 
         private static System.Timers.Timer _timer;
+        private static Logger _logger = LogManager.GetCurrentClassLogger();
 
         private static Queue<string> _fileLocations = new Queue<string>();
         private static DateTime Current_EndDate;
@@ -24,20 +28,52 @@ namespace ExcelUpdater
 
         static void Main(string[] args)
         {
+            Console.WindowWidth = 110;
+
+
+            _logger.Info("Starting Excel");
+
             //Start Excel and disable alerts
             _excel = new Application();
             _excel.DisplayAlerts = false;
             _excel.Visible = true;
+            _excel.WindowState = XlWindowState.xlNormal;
 
-            //Read in all files
-            _fileLocations = new Queue<string>(Directory.GetFiles("C:\\Users\\nibr02\\Documents\\excel-test"));
+            _logger.Info("Excel started successfully");
 
+            var path = ConfigurationManager.AppSettings["BaseFolderLocation"];
+
+            ReadFiles(path);
 
             finishedWorkBook += Program_finishedWorkBook;
             UpdateWorkBook();
 
             //Stop program from ending
             Console.ReadLine();
+
+            
+        }
+
+        private static void ReadFiles(string path)
+        {
+            _logger.Info($"Finding all Excel workbooks in {path}");
+
+            if (!Directory.Exists(path))
+            {
+                _logger.Error($"{path} does not exist");
+                Environment.Exit(1);
+            }
+
+            //Read in all files
+            var files = new DirectoryInfo(path).GetFiles().Where(x => !x.Attributes.HasFlag(FileAttributes.Hidden));
+
+
+            _fileLocations = new Queue<string>(files.Select(x => x.FullName));
+
+            foreach (var file in _fileLocations.ToList())
+            {
+                _logger.Info($"{file} added for processing");
+            }
         }
 
         private static void Program_finishedWorkBook(object sender, EventArgs e)
@@ -48,60 +84,106 @@ namespace ExcelUpdater
             }
             else
             {
+                _logger.Info($"Finished processing all workbooks");
+                _logger.Info($"Shutting down Excel");
+                _excel.Quit();
                 _excel.DisplayAlerts = true;
-                _excel.Quit();              
                 Marshal.ReleaseComObject(_excel);
+
+                SendEmailLog();
+
                 Environment.Exit(0);
             }
+        }
+
+        private static void SendEmailLog()
+        {
+            OutLook.Application app = new OutLook.Application();
+            OutLook.MailItem mailItem = app.CreateItem(OutLook.OlItemType.olMailItem);
+            mailItem.Subject = "Excel Updater Log";
+            mailItem.To = "nibr02@frederiksberg.dk";
+            mailItem.Body = "This is the message.";
+            mailItem.Attachments.Add(AppDomain.CurrentDomain.BaseDirectory + "log.txt");//logPath is a string holding path to the log.txt file
+            mailItem.Importance = OutLook.OlImportance.olImportanceHigh;
+            mailItem.Display(false);
         }
 
         private static void UpdateWorkBook()
         {
             var file = _fileLocations.Dequeue();
-            Current_WorkBook = _excel.Workbooks.Open(file);
 
-            //Find the current end date from the workbook
-            Current_EndDate = DateTime.Parse(Current_WorkBook.Names.Item("GetDataEnd").RefersToRange.Value);
+            _logger.Info($"{file} began processing");
 
-            Current_WorkBook.SheetChange += SheetCalculate;
+            try
+            {
+                Current_WorkBook = _excel.Workbooks.Open(file);
 
-            //Give focus to the current workbook
-            Current_WorkBook.Activate();
+                _logger.Info($"{Current_WorkBook.Name} opened in Excel");
 
-            //Use send keys to active prisme update through shortcuts
-            _excel.SendKeys("%");
-            _excel.SendKeys("Ø");
-            _excel.SendKeys("y3");
-            _excel.SendKeys("o");
+                //Find the current end date from the workbook
+                Current_EndDate = DateTime.Parse(Current_WorkBook.Names.Item("GetDataEnd").RefersToRange.Value.ToString());
+
+                Current_WorkBook.SheetChange += SheetCalculate;
+
+                //_excel.ActiveWorkbook.Activate();
+                //_excel.ActiveWorkbook.ActiveSheet.Select();
+
+                User32.SetForegroundWindow((IntPtr)_excel.Hwnd);
+
+                _logger.Info($"{Current_WorkBook.Name} updated started");
+
+                //Use send keys to active prisme update through shortcuts
+                _excel.SendKeys("%");
+                _excel.SendKeys("Ø");
+                _excel.SendKeys("y3");
+                _excel.SendKeys("o");
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, $"An error occured while running update on the workbook: {Current_WorkBook.Name}");
+            }
+
         }
 
         private static void SheetCalculate(object sender, Range Target)
         {
-            //See if process end date has been changed (which means we're done calculating)
-            var newDate = DateTime.Parse(Current_WorkBook.Names.Item("GetDataEnd").RefersToRange.Value);
-            if (newDate != Current_EndDate)
+            try
             {
-                Current_WorkBook.SheetChange -= SheetCalculate;
-                Current_WorkBook.AfterSave += Current_WorkBook_AfterSave;
-                Current_WorkBook.Save();                              
+                //See if process end date has been changed (which means we're done calculating)
+                var newDate = DateTime.Parse(Current_WorkBook.Names.Item("GetDataEnd").RefersToRange.Value.ToString());
+                if (newDate != Current_EndDate)
+                {
+                    _logger.Info($"{Current_WorkBook.Name} updated finished");
+                    Current_WorkBook.SheetChange -= SheetCalculate;
+                    Current_WorkBook.AfterSave += Current_WorkBook_AfterSave;
+                    Current_WorkBook.Save();
+                }
+            }         
+            catch(Exception ex)
+            {
+                _logger.Error(ex, $"An error occured while checking update status on the workbook: {Current_WorkBook.Name}");
             }
         }
 
         private static void Current_WorkBook_AfterSave(bool Success)
         {
+            _logger.Info($"{Current_WorkBook.Name} saved successfully");
+
             Current_WorkBook.RefreshAll();
 
             //We have to wait for the prisme add-in bacause it's doing its job on another thread
             _timer = new System.Timers.Timer();
-            _timer.Elapsed += _timer_Elapsed; 
+            _timer.Elapsed += _timer_Elapsed;
             _timer.Interval = 1000;
-            _timer.Enabled = true;           
+            _timer.Enabled = true;
         }
 
         private static void _timer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
         {
+            _logger.Info($"{Current_WorkBook.Name} processing complete");
             _timer.Enabled = false;
             _timer.Elapsed -= _timer_Elapsed;
+            Current_WorkBook.Close();
             finishedWorkBook(null, new EventArgs());
         }
     }
