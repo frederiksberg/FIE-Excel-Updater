@@ -7,9 +7,6 @@ using System.Configuration;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace ExcelUpdater
 {
@@ -30,6 +27,8 @@ namespace ExcelUpdater
         {
             Console.WindowWidth = 110;
 
+
+            AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
 
             _logger.Info("Starting Excel");
 
@@ -52,6 +51,11 @@ namespace ExcelUpdater
             Console.ReadLine();
 
             
+        }
+
+        private static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+        {
+            _logger.Error(e.ExceptionObject.ToString());
         }
 
         private static void ReadFiles(string path)
@@ -90,7 +94,7 @@ namespace ExcelUpdater
                 _excel.DisplayAlerts = true;
                 Marshal.ReleaseComObject(_excel);
 
-                SendEmailLog();
+                //SendEmailLog();
 
                 Environment.Exit(0);
             }
@@ -116,7 +120,8 @@ namespace ExcelUpdater
 
             try
             {
-                Current_WorkBook = _excel.Workbooks.Open(file);
+               
+                Current_WorkBook = _excel.Workbooks.Open(file, UpdateLinks:2);
 
                 _logger.Info($"{Current_WorkBook.Name} opened in Excel");
 
@@ -130,13 +135,16 @@ namespace ExcelUpdater
 
                 User32.SetForegroundWindow((IntPtr)_excel.Hwnd);
 
+                _logger.Info($"{_excel}");
+                _logger.Info($"{_excel.Workbooks}");
+
                 _logger.Info($"{Current_WorkBook.Name} updated started");
 
                 //Use send keys to active prisme update through shortcuts
                 _excel.SendKeys("%");
-                _excel.SendKeys("Ø");
-                _excel.SendKeys("y3");
-                _excel.SendKeys("o");
+                _excel.SendKeys("X");
+                _excel.SendKeys("Y");
+                _excel.SendKeys("O");
             }
             catch (Exception ex)
             {
