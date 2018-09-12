@@ -7,6 +7,7 @@ using System.Configuration;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using Microsoft.Win32;
 
 namespace ExcelUpdater
 {
@@ -50,7 +51,25 @@ namespace ExcelUpdater
             //Stop program from ending
             Console.ReadLine();
 
-            
+            SystemEvents.SessionEnded += SystemEvents_SessionEnded;
+            SystemEvents.SessionEnding += SystemEvents_SessionEnding; 
+            SystemEvents.SessionSwitch += SystemEvents_SessionSwitch;
+
+        }
+
+        private static void SystemEvents_SessionEnding(object sender, SessionEndingEventArgs e)
+        {
+            _logger.Info($"Session ended because {e.Reason} ");
+        }
+
+        private static void SystemEvents_SessionSwitch(object sender, SessionSwitchEventArgs e)
+        {
+            _logger.Info($"Session switched because {e.Reason} ");
+        }
+
+        private static void SystemEvents_SessionEnded(object sender, SessionEndedEventArgs e)
+        {
+            _logger.Info($"Session ended because {e.Reason} ");
         }
 
         private static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
@@ -120,7 +139,6 @@ namespace ExcelUpdater
 
             try
             {
-               
                 Current_WorkBook = _excel.Workbooks.Open(file, UpdateLinks:2);
 
                 _logger.Info($"{Current_WorkBook.Name} opened in Excel");
@@ -135,10 +153,9 @@ namespace ExcelUpdater
 
                 User32.SetForegroundWindow((IntPtr)_excel.Hwnd);
 
-                _logger.Info($"{_excel}");
-                _logger.Info($"{_excel.Workbooks}");
-
                 _logger.Info($"{Current_WorkBook.Name} updated started");
+
+
 
                 //Use send keys to active prisme update through shortcuts
                 _excel.SendKeys("%");
